@@ -23,6 +23,7 @@ embedded-hal = "1.0.0-alpha.9"
 esp-idf-hal = "0.39.0"
 esp-idf-sys = { version = "0.31.9", features = ["binstart"] }
 mipidsi = "0.5.0"
+rotary-encoder-embedded = "0.2.0"
 
 
 [build-dependencies]
