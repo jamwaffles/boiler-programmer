@@ -18,3 +18,10 @@ More HTTP stuff: <https://espressif-trainings.ferrous-systems.com/03_3_2_http_cl
 interrupt examples)
 
 Note: <https://crates.io/crates/rotary-encoder-embedded>
+
+Links to other projects: <https://github.com/esp-rs/awesome-esp-rust>
+
+Interrupt: <https://github.com/ferrous-systems/espressif-trainings/tree/main/advanced>
+
+Async networking using `smol`:
+<https://github.com/ivmarkov/rust-esp32-std-demo/blob/main/src/main.rs>
