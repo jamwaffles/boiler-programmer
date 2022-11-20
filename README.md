@@ -16,3 +16,5 @@ ESPHome Rust client: <https://github.com/pixelspark/esphome-rs/blob/main/src/con
 
 More HTTP stuff: <https://espressif-trainings.ferrous-systems.com/03_3_2_http_client.html> (also has
 interrupt examples)
+
+Note: <https://crates.io/crates/rotary-encoder-embedded>
