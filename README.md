@@ -6,3 +6,13 @@ Using an AI-Thinker NodeMCU-Series ESP-C3-32S-Kit
 
 Schematic
 [here](https://docs.ai-thinker.com/_media/esp32/docs/esp-c3-32s-kit-v1.0_specification.pdf).
+
+---
+
+Wifi MQTT example:
+<https://github.com/bjoernQ/esp32c3-rust-std-temperature-logger/blob/main/src/main.rs>
+
+ESPHome Rust client: <https://github.com/pixelspark/esphome-rs/blob/main/src/connection.rs>
+
+More HTTP stuff: <https://espressif-trainings.ferrous-systems.com/03_3_2_http_client.html> (also has
+interrupt examples)
