@@ -179,13 +179,7 @@ fn main() -> anyhow::Result<()> {
         loop {
             // Button is active-low
             if let Some(Edge::Rising) = debouncer.update(button.is_low()) {
-                // if last_press.elapsed() > Duration::from_millis(30) {
                 button_state_writer.fetch_add(1, Ordering::SeqCst);
-
-                // last_press = Instant::now();
-                // }
-            } else {
-                // button_state_writer.store(true, Ordering::SeqCst);
             }
 
             thread::sleep(Duration::from_millis(15));
