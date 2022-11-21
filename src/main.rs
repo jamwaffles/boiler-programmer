@@ -14,9 +14,15 @@ use esp_idf_hal::{
     units::FromValueType,
 };
 use esp_idf_sys as _;
+use esp_idf_sys::{
+    c_types::c_void, esp, gpio_config, gpio_config_t, gpio_install_isr_service,
+    gpio_int_type_t_GPIO_INTR_ANYEDGE, gpio_isr_handler_add, gpio_mode_t_GPIO_MODE_INPUT,
+    xQueueGenericCreate, xQueueGiveFromISR, xQueueReceive, QueueHandle_t, ESP_INTR_FLAG_IRAM,
+};
 use mipidsi::{Builder, Orientation};
 use rotary_encoder_embedded::{Direction, RotaryEncoder};
 use std::{
+    ptr,
     sync::{
         atomic::{AtomicBool, AtomicI32, Ordering},
         Arc,
@@ -25,13 +31,67 @@ use std::{
     time::Duration,
 };
 
+// This `static mut` holds the queue handle we are going to get from `xQueueGenericCreate`.
+// This is unsafe, but we are careful not to enable our GPIO interrupt handler until after this value has been initialised, and then never modify it again
+static mut EVENT_QUEUE: Option<QueueHandle_t> = None;
+
+#[link_section = ".iram0.text"]
+unsafe extern "C" fn button_interrupt(_: *mut c_void) {
+    xQueueGiveFromISR(EVENT_QUEUE.unwrap(), std::ptr::null_mut());
+}
+
 fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take().unwrap();
     let spi = peripherals.spi2;
 
+    // To S2 on encoder
     let rotary_a = PinDriver::input(peripherals.pins.gpio1)?;
+    // To S1 on encoder
     let rotary_b = PinDriver::input(peripherals.pins.gpio2)?;
+    // To KEY on encoder
     let button = PinDriver::input(peripherals.pins.gpio3)?;
+
+    // Configures the button
+    let io_conf = gpio_config_t {
+        pin_bit_mask: (1 << 1) | (1 << 2) | (1 << 3),
+        mode: gpio_mode_t_GPIO_MODE_INPUT,
+        pull_up_en: false.into(),
+        pull_down_en: false.into(),
+        intr_type: gpio_int_type_t_GPIO_INTR_ANYEDGE,
+    };
+
+    // Queue configurations
+    const QUEUE_TYPE_BASE: u8 = 0;
+    const ITEM_SIZE: u32 = 0; // we're not posting any actual data, just notifying
+    const QUEUE_SIZE: u32 = 10;
+
+    unsafe {
+        // Writes the button configuration to the registers
+        esp!(gpio_config(&io_conf))?;
+
+        // Installs the generic GPIO interrupt handler
+        esp!(gpio_install_isr_service(ESP_INTR_FLAG_IRAM as i32))?;
+
+        // Instantiates the event queue
+        EVENT_QUEUE = Some(xQueueGenericCreate(QUEUE_SIZE, ITEM_SIZE, QUEUE_TYPE_BASE));
+
+        // Registers our function with the generic GPIO interrupt handler we installed earlier.
+        esp!(gpio_isr_handler_add(
+            1,
+            Some(button_interrupt),
+            std::ptr::null_mut()
+        ))?;
+        esp!(gpio_isr_handler_add(
+            2,
+            Some(button_interrupt),
+            std::ptr::null_mut()
+        ))?;
+        esp!(gpio_isr_handler_add(
+            3,
+            Some(button_interrupt),
+            std::ptr::null_mut()
+        ))?;
+    }
 
     let mut rotary_encoder = RotaryEncoder::new(rotary_a, rotary_b).into_standard_mode();
 
@@ -53,10 +113,8 @@ fn main() -> anyhow::Result<()> {
         spi,
         sclk,
         sda,
-        // Some(sdi),
         Option::<gpio::Gpio1>::None,
         Dma::Auto(1024),
-        // Some(cs),
         Option::<gpio::Gpio2>::None,
         &config,
     )?;
@@ -75,26 +133,7 @@ fn main() -> anyhow::Result<()> {
 
     // turn on the backlight
     backlight.set_high()?;
-
-    // let raw_image_data = ImageRawLE::new(include_bytes!("../examples/assets/ferris.raw"), 86);
-    // let ferris = Image::new(&raw_image_data, Point::new(0, 0));
-
-    // draw image on black background
     display.clear(Rgb565::BLACK).unwrap();
-    // ferris.draw(&mut display).unwrap();
-
-    // Rectangle::new(Point::new(10, 10), Size::new(40, 50))
-    //     .into_styled(
-    //         PrimitiveStyleBuilder::new()
-    //             .stroke_width(3)
-    //             .stroke_color(Rgb565::RED)
-    //             .fill_color(Rgb565::GREEN)
-    //             .build(),
-    //     )
-    //     .draw(&mut display)
-    //     .unwrap();
-
-    // println!("Image printed!");
 
     let mut count = Arc::new(AtomicI32::new(0));
     let mut button_state = Arc::new(AtomicBool::new(false));
@@ -103,29 +142,63 @@ fn main() -> anyhow::Result<()> {
     let button_state_writer = button_state.clone();
 
     thread::spawn(move || {
+        // loop {
+        //     rotary_encoder.update();
+
+        //     match rotary_encoder.direction() {
+        //         Direction::Clockwise => {
+        //             count_writer.fetch_sub(1, Ordering::Relaxed);
+        //         }
+        //         Direction::Anticlockwise => {
+        //             count_writer.fetch_add(1, Ordering::Relaxed);
+        //         }
+        //         Direction::None => {
+        //             // Do nothing
+        //         }
+        //     }
+
+        //     // TODO: `debouncr`
+        //     if button.is_high() {
+        //         button_state_writer.store(false, Ordering::Relaxed);
+        //     } else {
+        //         button_state_writer.store(true, Ordering::Relaxed);
+        //     }
+
+        //     thread::sleep(Duration::from_millis(10));
+        // }
+
+        // Reads the queue in a loop.
         loop {
-            rotary_encoder.update();
+            unsafe {
+                // maximum delay
+                const QUEUE_WAIT_TICKS: u32 = 1000;
 
-            match rotary_encoder.direction() {
-                Direction::Clockwise => {
-                    count_writer.fetch_sub(1, Ordering::Relaxed);
-                }
-                Direction::Anticlockwise => {
-                    count_writer.fetch_add(1, Ordering::Relaxed);
-                }
-                Direction::None => {
-                    // Do nothing
+                // Reads the event item out of the queue
+                let res = xQueueReceive(EVENT_QUEUE.unwrap(), ptr::null_mut(), QUEUE_WAIT_TICKS);
+
+                if res == 1 {
+                    rotary_encoder.update();
+
+                    match rotary_encoder.direction() {
+                        Direction::Clockwise => {
+                            count_writer.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Direction::Anticlockwise => {
+                            count_writer.fetch_sub(1, Ordering::SeqCst);
+                        }
+                        Direction::None => {
+                            // Do nothing
+                        }
+                    }
+
+                    // TODO: `debouncr` - if encoder module doesn't already debounce button inputs
+                    if button.is_high() {
+                        button_state_writer.store(false, Ordering::SeqCst);
+                    } else {
+                        button_state_writer.store(true, Ordering::SeqCst);
+                    }
                 }
             }
-
-            // TODO: `debouncr`
-            if button.is_high() {
-                button_state_writer.store(false, Ordering::Relaxed);
-            } else {
-                button_state_writer.store(true, Ordering::Relaxed);
-            }
-
-            thread::sleep(Duration::from_millis(10));
         }
     });
 
@@ -138,9 +211,9 @@ fn main() -> anyhow::Result<()> {
     loop {
         Text::new(
             &format!(
-                "Count: {}\nButton: {}",
-                count.load(Ordering::Relaxed),
-                if button_state.load(Ordering::Relaxed) {
+                "Count: {}         \nButton: {}",
+                count.load(Ordering::SeqCst),
+                if button_state.load(Ordering::SeqCst) {
                     "1"
                 } else {
                     "0"
@@ -152,6 +225,6 @@ fn main() -> anyhow::Result<()> {
         .draw(&mut display)
         .unwrap();
 
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(50));
     }
 }

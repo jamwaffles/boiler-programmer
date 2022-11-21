@@ -25,3 +25,6 @@ Interrupt: <https://github.com/ferrous-systems/espressif-trainings/tree/main/adv
 
 Async networking using `smol`:
 <https://github.com/ivmarkov/rust-esp32-std-demo/blob/main/src/main.rs>
+
+Keep a close eye on <https://github.com/esp-rs/esp-idf-hal/pull/157> for encoder counting using
+interrupts. NOTE: Not available on RISC-V it seems.
