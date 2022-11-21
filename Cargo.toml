@@ -17,6 +17,7 @@ pio = ["esp-idf-sys/pio"]
 
 [dependencies]
 anyhow = "1"
+debouncr = "0.2.2"
 display-interface-spi = "0.4.1"
 embedded-graphics = "0.7.1"
 embedded-hal = "1.0.0-alpha.9"

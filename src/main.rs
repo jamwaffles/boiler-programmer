@@ -1,3 +1,4 @@
+use debouncr::{debounce_2, Edge};
 use display_interface_spi::SPIInterfaceNoCS;
 use embedded_graphics::{
     mono_font::{ascii::FONT_7X13, MonoTextStyle, MonoTextStyleBuilder},
@@ -24,11 +25,11 @@ use rotary_encoder_embedded::{Direction, RotaryEncoder};
 use std::{
     ptr,
     sync::{
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering},
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 // This `static mut` holds the queue handle we are going to get from `xQueueGenericCreate`.
@@ -86,11 +87,12 @@ fn main() -> anyhow::Result<()> {
             Some(button_interrupt),
             std::ptr::null_mut()
         ))?;
-        esp!(gpio_isr_handler_add(
-            3,
-            Some(button_interrupt),
-            std::ptr::null_mut()
-        ))?;
+        // Button - we'll just poll this in a loop for debouncing reasons
+        // esp!(gpio_isr_handler_add(
+        //     3,
+        //     Some(button_interrupt),
+        //     std::ptr::null_mut()
+        // ))?;
     }
 
     let mut rotary_encoder = RotaryEncoder::new(rotary_a, rotary_b).into_standard_mode();
@@ -136,37 +138,13 @@ fn main() -> anyhow::Result<()> {
     display.clear(Rgb565::BLACK).unwrap();
 
     let mut count = Arc::new(AtomicI32::new(0));
-    let mut button_state = Arc::new(AtomicBool::new(false));
+    // let mut button_state = Arc::new(AtomicBool::new(false));
+    let mut button_state = Arc::new(AtomicU32::new(0));
 
     let count_writer = count.clone();
     let button_state_writer = button_state.clone();
 
     thread::spawn(move || {
-        // loop {
-        //     rotary_encoder.update();
-
-        //     match rotary_encoder.direction() {
-        //         Direction::Clockwise => {
-        //             count_writer.fetch_sub(1, Ordering::Relaxed);
-        //         }
-        //         Direction::Anticlockwise => {
-        //             count_writer.fetch_add(1, Ordering::Relaxed);
-        //         }
-        //         Direction::None => {
-        //             // Do nothing
-        //         }
-        //     }
-
-        //     // TODO: `debouncr`
-        //     if button.is_high() {
-        //         button_state_writer.store(false, Ordering::Relaxed);
-        //     } else {
-        //         button_state_writer.store(true, Ordering::Relaxed);
-        //     }
-
-        //     thread::sleep(Duration::from_millis(10));
-        // }
-
         // Reads the queue in a loop.
         loop {
             unsafe {
@@ -190,15 +168,27 @@ fn main() -> anyhow::Result<()> {
                             // Do nothing
                         }
                     }
-
-                    // TODO: `debouncr` - if encoder module doesn't already debounce button inputs
-                    if button.is_high() {
-                        button_state_writer.store(false, Ordering::SeqCst);
-                    } else {
-                        button_state_writer.store(true, Ordering::SeqCst);
-                    }
                 }
             }
+        }
+    });
+
+    thread::spawn(move || {
+        let mut debouncer = debounce_2(false);
+
+        loop {
+            // Button is active-low
+            if let Some(Edge::Rising) = debouncer.update(button.is_low()) {
+                // if last_press.elapsed() > Duration::from_millis(30) {
+                button_state_writer.fetch_add(1, Ordering::SeqCst);
+
+                // last_press = Instant::now();
+                // }
+            } else {
+                // button_state_writer.store(true, Ordering::SeqCst);
+            }
+
+            thread::sleep(Duration::from_millis(15));
         }
     });
 
@@ -213,11 +203,11 @@ fn main() -> anyhow::Result<()> {
             &format!(
                 "Count: {}         \nButton: {}",
                 count.load(Ordering::SeqCst),
-                if button_state.load(Ordering::SeqCst) {
-                    "1"
-                } else {
-                    "0"
-                },
+                button_state.load(Ordering::SeqCst) // if button_state.load(Ordering::SeqCst) {
+                                                    //     "1"
+                                                    // } else {
+                                                    //     "0"
+                                                    // },
             ),
             Point::new(20, 20),
             style,
